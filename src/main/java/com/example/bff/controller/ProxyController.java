@@ -134,7 +134,7 @@ public class ProxyController {
 
         if (isAuthRelated) {
             logger.info("[ProxyController:forwardGetRequest] Routing GET request to Auth Service for URI: {}", requestUri);
-            if (proxyService.isAuthApiEndpoint(requestUri) || proxyService.isAdminEndpoint(requestUri)) {
+            if (proxyService.isAuthApiEndpoint(requestUri)) {
                 return proxyService.forwardRequestWithToken(backendUrl + requestUri, headers, HttpMethod.GET);
             }
             return ResponseEntity.ok(new ApiResponse<>(false, HttpStatus.UNAUTHORIZED.value(), "Invalid auth GET endpoint", null));
