@@ -57,48 +57,223 @@ public class ProxyController {
         return ResponseEntity.ok("Hello World!");
     }
 
-    @PostMapping(value = "/**", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
-    public ResponseEntity<?> forwardMultipartRequest(
-            @RequestHeader(value = "Authorization", required = false) String token,
+    @PostMapping(value = "/Main/**", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public ResponseEntity<?> forwardMultipartToMain(
+            @RequestHeader(value = "Authorization", required = true) String token,
             @RequestPart("file") MultipartFile file,
             @RequestParam Map<String, String> formFields,
             HttpServletRequest request) {
-        
+
+        // Initialize HttpHeaders
         HttpHeaders headers = new HttpHeaders();
+
+        // Add Correlation ID to headers
         headers = addCorrelationIdHeader(headers);
         String correlationId = headers.getFirst("X-Correlation-Id");
-        
-        String authHeader = request.getHeader("Authorization");
-        if (authHeader != null && !authHeader.isEmpty()) {
-            headers.set("Authorization", authHeader);
-        }
+        logger.info("[ProxyController:forwardMultipartToMain] Token received at bff: {} for Correlation ID: {}", token, correlationId);
 
-        String requestUri = request.getRequestURI().replace("/BFF/api/proxy", "");
+        // Extract Authorization header from the request if present
+        String authHeader = request.getHeader("Authorization");
+        logger.info("[ProxyController:forwardMultipartToMain] Authorization header received: {} for Correlation ID: {}", authHeader, correlationId);
+
+        String requestUri = request.getRequestURI().replace("/BFF/api/proxy/Main", "");
+        logger.info("[ProxyController:forwardMultipartToMain] RequestUri: {} for Correlation ID: {}", requestUri, correlationId);
 
         String backendUrl = routingService.determineBackendUrl(requestUri);
         if (backendUrl == null) {
+            logger.error("[ProxyController:forwardMultipartToMain] Service not found for URI: {} with Correlation ID: {}", requestUri, correlationId);
             return ResponseEntity.ok(new ApiResponse<>(false, HttpStatus.NOT_FOUND.value(), "Service not found", null));
         }
 
+        // Add Authorization header
+        if (authHeader != null && !authHeader.isEmpty()) {
+            headers.set("Authorization", authHeader);
+        } else {
+            logger.error("[ProxyController:forwardMultipartToMain] Authorization header is missing or empty for Correlation ID: {}", correlationId);
+            return ResponseEntity.ok(new ApiResponse<>(false, HttpStatus.UNAUTHORIZED.value(), "Authorization header is missing", null));
+        }
+
+        // Set Content-Type for multipart request
         headers.setContentType(MediaType.MULTIPART_FORM_DATA);
 
+        // Prepare the multipart request body
         MultiValueMap<String, Object> body = new LinkedMultiValueMap<>();
         try {
+            // Add the file
             if (file != null && !file.isEmpty()) {
                 body.add("file", new MultipartInputStreamFileResource(file.getInputStream(), file.getOriginalFilename()));
+                logger.info("[ProxyController:forwardMultipartToMain] Added file: {} for Correlation ID: {}", file.getOriginalFilename(), correlationId);
+            } else {
+                logger.error("[ProxyController:forwardMultipartToMain] File is missing or empty for Correlation ID: {}", correlationId);
+                return ResponseEntity.ok(new ApiResponse<>(false, HttpStatus.BAD_REQUEST.value(), "File is missing or empty", null));
             }
+
+            // Add all additional form-data parameters
             for (Map.Entry<String, String> entry : formFields.entrySet()) {
                 body.add(entry.getKey(), entry.getValue());
+                logger.info("[ProxyController:forwardMultipartToMain] Adding form field: {} = {} for Correlation ID: {}", entry.getKey(), entry.getValue(), correlationId);
             }
         } catch (IOException e) {
+            logger.error("[ProxyController:forwardMultipartToMain] Error reading file for Correlation ID: {}. Error: {}", correlationId, e.getMessage(), e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                     .body(new ApiResponse<>(false, HttpStatus.INTERNAL_SERVER_ERROR.value(), "Error reading file: " + e.getMessage(), null));
         }
 
-        return proxyService.forwardMultipartRequest(backendUrl + requestUri, headers, body);
+        // Forward the request with headers and body separately
+        ResponseEntity<?> response = proxyService.forwardMultipartRequest(backendUrl + requestUri, headers, body);
+        logger.info("[ProxyController:forwardMultipartToMain] Received response for Correlation ID: {}. Status: {}", correlationId, response.getStatusCode());
+        return response;
     }
 
-    @GetMapping("/**")
+    @GetMapping("/Main/**")
+    public ResponseEntity<?> forwardGetRequest(
+            @RequestHeader(value = "Authorization", required = false) String token,
+            HttpServletRequest request) {
+
+        HttpHeaders headers = new HttpHeaders();
+        headers = addCorrelationIdHeader(headers);
+        String correlationId = headers.getFirst("X-Correlation-Id");
+        if (token != null && !token.isEmpty()) {
+            headers.set(HttpHeaders.AUTHORIZATION, token);
+            logger.info("[ProxyController:forwardGetRequest] Authorization header added: {} for Correlation ID: {}", token, correlationId);
+        }
+
+        String requestUri = request.getRequestURI().replace("/BFF/api/proxy/Main", "");
+        String queryString = request.getQueryString();
+        String fullRequestUri = queryString != null ? requestUri + "?" + queryString : requestUri;
+        String backendUrl = routingService.determineBackendUrl(requestUri);
+        if (backendUrl == null) {
+            logger.info("[ProxyController:forwardGetRequest] Service not found for URI: {} for Correlation ID: {}", requestUri,correlationId );
+            return ResponseEntity.ok(new ApiResponse<>(false, HttpStatus.NOT_FOUND.value(), "Service not found", null));
+        }
+
+        if (proxyService.isMainServiceEndpoint(requestUri)) {
+            return proxyService.forwardRequestWithToken(backendUrl + fullRequestUri, headers, HttpMethod.GET);
+        }
+        return proxyService.forwardRequestWithToken(backendUrl + fullRequestUri, headers, HttpMethod.GET);
+    }
+
+
+    @RequestMapping(value = "/AuthForward/**", method = {RequestMethod.POST, RequestMethod.PUT, RequestMethod.DELETE, RequestMethod.PATCH})
+    public ResponseEntity<?> forwardPostRequest(
+            @RequestHeader(value = "Authorization", required = false) String token,
+            @RequestBody(required = false) Map<String, Object> requestBody,
+            HttpServletRequest request, HttpServletResponse response) {
+        HttpMethod httpMethod = HttpMethod.valueOf(request.getMethod());
+
+        HttpHeaders headers = new HttpHeaders();
+        headers = addCorrelationIdHeader(headers);
+        String correlationId = headers.getFirst("X-Correlation-Id");
+        String authHeader = request.getHeader(HttpHeaders.AUTHORIZATION);
+        if (authHeader != null && authHeader.startsWith("Bearer ")) {
+            headers.set(HttpHeaders.AUTHORIZATION, authHeader);
+            logger.info("[ProxyController:forwardPostRequest] Authorization header added: {} for Correlation ID: {}", authHeader, correlationId);
+        } else {
+            logger.info("[ProxyController:forwardPostRequest] No Authorization header for Correlation ID {}",correlationId);
+        }
+
+        String requestUri = request.getRequestURI().replace("/BFF/api/proxy/AuthForward", "");
+        logger.info("[ProxyController:forwardPostRequest] RequestUri : {} for Correlation ID {} ", requestUri, correlationId);
+
+        String backendUrl = routingService.determineBackendUrl(requestUri);
+        if (backendUrl == null) {
+            logger.info("[ProxyController:forwardPostRequest] Service not found for URI: {} for Correlation ID: {}", requestUri,correlationId );
+            return ResponseEntity.ok(new ApiResponse<>(false, HttpStatus.NOT_FOUND.value(), "Service not found", null));
+        }
+        if (proxyService.isOtpVerification(requestUri)) {
+            logger.info("[ProxyController] Handling OTP verification for: {} for Correlation ID: {}",
+                    requestUri, correlationId);
+
+            ResponseEntity<?> authResponse = proxyService.forwardRequestWithoutToken(
+                    backendUrl + requestUri, httpMethod, headers, requestBody);
+
+            logger.info("[ProxyController:forwardPostRequest] OTP verification response: {} for Correlation ID: {}",
+                    authResponse, correlationId);
+
+            if (authResponse.getBody() != null) {
+                // Check if response is successful before processing
+                if (authResponse.getStatusCode().is2xxSuccessful()) {
+                    logger.info("[ProxyController:forwardPostRequest] Processing successful OTP verification response for Correlation ID: {}",
+                            correlationId);
+                    return processAuthResponse(authResponse.getBody(), response);
+                } else {
+                    logger.warn("[ProxyController:forwardPostRequest] OTP verification failed with status: {} for Correlation ID: {}",
+                            authResponse.getStatusCode(), correlationId);
+                }
+            } else {
+                logger.error("[ProxyController:forwardPostRequest] OTP verification response body is null for Correlation ID: {}",
+                        correlationId);
+            }
+            return authResponse;
+        }
+        if (proxyService.isAuthEndpoint(requestUri)) {
+            logger.info("[ProxyController:forwardPostRequest] Skipping token validation for auth endpoint: {} for Correlation ID: {} ", requestUri, correlationId);
+            return proxyService.forwardRequestWithoutToken(backendUrl + requestUri, httpMethod, headers, requestBody);
+        }else if (proxyService.isSignup(requestUri)) {
+            logger.info("[ProxyController:forwardPostRequest] Skipping token validation for User sign up endpoint: {} for Correlation ID: {} ", requestUri, correlationId);
+            ResponseEntity<?> authResponse = proxyService.forwardRequestWithoutToken(backendUrl + requestUri, httpMethod, headers, requestBody);
+            logger.info("[ProxyController:forwardPostRequest] authResponse {} for Correlation ID: {} ", authResponse, correlationId);
+            if (authResponse.getStatusCode().is2xxSuccessful() && authResponse != null) {
+                logger.info("[ProxyController:forwardPostRequest] Process AuthResponse for Correlation ID: {} ", correlationId);
+                return processAuthResponse(authResponse.getBody(), response); //To do (need to change for the sign-up)
+            }
+            return authResponse;
+        } else if (proxyService.isLogin(requestUri)) {
+            logger.info("[ProxyController:forwardPostRequest] Skipping token validation for logging endpoint: {} for Correlation ID: {} ", requestUri, correlationId);
+            ResponseEntity<?> authResponse = proxyService.forwardRequestWithoutToken(backendUrl + requestUri, httpMethod, headers, requestBody);
+            logger.info("[ProxyController:forwardPostRequest] authResponse {} for Correlation ID: {} ", authResponse, correlationId);
+            if (authResponse.getStatusCode().is2xxSuccessful() && authResponse != null) {
+                logger.info("[ProxyController:forwardPostRequest] Process AuthResponse for Correlation ID: {} ", correlationId);
+                return processAuthResponse(authResponse.getBody(), response);
+            }
+            return authResponse;
+        } else if (proxyService.isAuthApiEndpoint(requestUri)) {
+            logger.info("[ProxyController:forwardPostRequest] Token validation for auth api endpoint for Correlation ID: " + requestUri, correlationId);
+            return proxyService.forwardRequestWithToken(backendUrl + requestUri, headers, requestBody, httpMethod);
+        } else if (proxyService.isRefreshToken(requestUri)) {
+            logger.info("[ProxyController:forwardPostRequest] Token validation for auth endpoint for Correlation ID: " + requestUri, correlationId);
+
+            // Process the logout request (extract and add refresh token to headers)
+            boolean requestProcessed = fingerprintUtils.processRefreshTokenRequest(request, headers, correlationId);
+
+            if (!requestProcessed) {
+                return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                        .body(new ApiResponse<>(false, HttpStatus.BAD_REQUEST.value(), "Refresh token is missing or invalid", null));
+            }
+            return proxyService.forwardRequestWithToken(backendUrl + requestUri, headers, httpMethod );
+        } else if (proxyService.isLogout(requestUri)) {
+            logger.info("[ProxyController:forwardPostRequest] Handling logout request for URI: {} for Correlation ID: {}",
+                    requestUri, correlationId);
+
+            // Process the logout request (extract and add refresh token to headers)
+            boolean requestProcessed = fingerprintUtils.processLogoutRequest(request, headers, correlationId);
+
+            if (!requestProcessed) {
+                return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                        .body(new ApiResponse<>(false, HttpStatus.BAD_REQUEST.value(), "Refresh token is missing or invalid", null));
+            }
+
+            // Forward the request to the auth service
+            ResponseEntity<?> logoutResponse = proxyService.forwardRequestWithTokenForLogout(
+                    backendUrl + requestUri, headers, httpMethod, correlationId);
+
+            // Process the logout response (clear cookies if successful)
+            return fingerprintUtils.processLogoutResponse(logoutResponse, response, correlationId);
+        } else if (proxyService.isAdminEndpoint(requestUri)) {
+            // Admin endpoints - forward without JWT validation (admin key is validated by Auth Service)
+            logger.info("[ProxyController:forwardPostRequest] Forwarding admin endpoint without JWT validation: {} for Correlation ID: {}", requestUri, correlationId);
+            
+            // Copy X-Admin-Key header if present
+            String adminKey = request.getHeader("X-Admin-Key");
+            if (adminKey != null && !adminKey.isEmpty()) {
+                headers.set("X-Admin-Key", adminKey);
+            }
+            
+            return proxyService.forwardRequestWithoutToken(backendUrl + requestUri, httpMethod, headers, requestBody);
+        }
+        return ResponseEntity.ok(new ApiResponse<>(false, HttpStatus.UNAUTHORIZED.value(), "Invalid endpoint", null));
+    }
+    @GetMapping("/AuthForward/**")
     public ResponseEntity<?> forwardGetRequest(
             @RequestHeader(value = "Authorization", required = false) String token,
             @RequestBody(required = false) Map<String, Object> requestBody,
@@ -107,137 +282,68 @@ public class ProxyController {
         HttpHeaders headers = new HttpHeaders();
         headers = addCorrelationIdHeader(headers);
         String correlationId = headers.getFirst("X-Correlation-Id");
-        
         String authHeader = request.getHeader(HttpHeaders.AUTHORIZATION);
         if (authHeader != null && authHeader.startsWith("Bearer ")) {
             headers.set(HttpHeaders.AUTHORIZATION, authHeader);
+            logger.info("[ProxyController:forwardPostRequest] Authorization header added: {} for Correlation ID: {}", authHeader, correlationId);
+        } else {
+            logger.info("[ProxyController:forwardPostRequest] No Authorization header for Correlation ID {}",correlationId);
         }
 
-        String requestUri = request.getRequestURI().replace("/BFF/api/proxy", "");
+        String requestUri = request.getRequestURI().replace("/BFF/api/proxy/AuthForward", "");
+        logger.info("[ProxyController:forwardPostRequest] RequestUri : {} for Correlation ID {} ", requestUri, correlationId);
 
-        String queryString = request.getQueryString();
-        String fullRequestUri = queryString != null ? requestUri + "?" + queryString : requestUri;
         String backendUrl = routingService.determineBackendUrl(requestUri);
-        
         if (backendUrl == null) {
-            logger.info("[ProxyController:forwardGetRequest] Service not found for URI: {} for Correlation ID: {}", requestUri, correlationId);
+            logger.info("[ProxyController:forwardPostRequest] Service not found for URI: {} for Correlation ID: {}", requestUri,correlationId );
             return ResponseEntity.ok(new ApiResponse<>(false, HttpStatus.NOT_FOUND.value(), "Service not found", null));
         }
+        if (proxyService.isAuthApiEndpoint(requestUri)) {
+            logger.info("[ProxyController:forwardPostRequest] Token validation for auth endpoint for Correlation ID: " + requestUri, correlationId);
 
-        boolean isAuthRelated = proxyService.isAuthEndpoint(requestUri) 
-                || proxyService.isLogin(requestUri) 
-                || proxyService.isSignup(requestUri) 
-                || proxyService.isLogout(requestUri) 
-                || proxyService.isRefreshToken(requestUri) 
-                || proxyService.isAuthApiEndpoint(requestUri) 
-                || proxyService.isAdminEndpoint(requestUri);
-
-        if (isAuthRelated) {
-            logger.info("[ProxyController:forwardGetRequest] Routing GET request to Auth Service for URI: {}", requestUri);
-            if (proxyService.isAuthApiEndpoint(requestUri)) {
-                return proxyService.forwardRequestWithToken(backendUrl + requestUri, headers, HttpMethod.GET);
-            }
-            return ResponseEntity.ok(new ApiResponse<>(false, HttpStatus.UNAUTHORIZED.value(), "Invalid auth GET endpoint", null));
-        } else {
-            logger.info("[ProxyController:forwardGetRequest] Routing GET request to Main Backend for URI: {}", requestUri);
-            return proxyService.forwardRequestWithToken(backendUrl + fullRequestUri, headers, HttpMethod.GET);
+            return proxyService.forwardRequestWithToken(backendUrl + requestUri, headers, HttpMethod.GET );
         }
+        return ResponseEntity.ok(new ApiResponse<>(false, HttpStatus.UNAUTHORIZED.value(), "Invalid endpoint", null));
     }
 
-    @RequestMapping(value = "/**", method = {RequestMethod.POST, RequestMethod.PUT, RequestMethod.DELETE, RequestMethod.PATCH})
-    public ResponseEntity<?> forwardWriteRequest(
-            @RequestHeader(value = "Authorization", required = false) String token,
+    @RequestMapping(value = "/Main/**", method = {RequestMethod.POST, RequestMethod.PUT, RequestMethod.DELETE, RequestMethod.PATCH})
+    public ResponseEntity<?> MainForwardPostRequest(
+            @RequestHeader(value = "Authorization", required = true) String token,
             @RequestBody(required = false) Map<String, Object> requestBody,
-            HttpServletRequest request, HttpServletResponse response) {
-        
+            HttpServletRequest request) {
         HttpMethod httpMethod = HttpMethod.valueOf(request.getMethod());
 
+        // Initialize HttpHeaders
         HttpHeaders headers = new HttpHeaders();
+
+        // Add Correlation ID to headers
         headers = addCorrelationIdHeader(headers);
         String correlationId = headers.getFirst("X-Correlation-Id");
-        
-        String authHeader = request.getHeader(HttpHeaders.AUTHORIZATION);
-        if (authHeader != null && authHeader.startsWith("Bearer ")) {
-            headers.set(HttpHeaders.AUTHORIZATION, authHeader);
-            logger.info("[ProxyController:forwardWriteRequest] Authorization header added for Correlation ID {}", correlationId);
-        }
+        logger.info("[ProxyController:MainForwardPostRequest] Token received at bff: {} for Correlation ID: {} ", token , correlationId);
 
-        String requestUri = request.getRequestURI().replace("/BFF/api/proxy", "");
-        
-        logger.info("[ProxyController:forwardWriteRequest] RequestUri : {} for Correlation ID {} ", requestUri, correlationId);
+        // Extract Authorization header from the request if present
+        String authHeader = request.getHeader("Authorization");
+        logger.info("[ProxyController:MainForwardPostRequest] Authorization header received: " + authHeader);
+
+        String requestUri = request.getRequestURI().replace("/BFF/api/proxy/Main", "");
+        logger.info("[ProxyController:MainForwardPostRequest] RequestUri : " + requestUri);
 
         String backendUrl = routingService.determineBackendUrl(requestUri);
         if (backendUrl == null) {
-            logger.info("[ProxyController:forwardWriteRequest] Service not found for URI: {} for Correlation ID: {}", requestUri, correlationId);
+            logger.info("[ProxyController:MainForwardPostRequest] Service not found for URI: {} for Correlation ID: {}", requestUri,correlationId );
             return ResponseEntity.ok(new ApiResponse<>(false, HttpStatus.NOT_FOUND.value(), "Service not found", null));
         }
 
-        boolean isAuthRelated = proxyService.isAuthEndpoint(requestUri) 
-                || proxyService.isLogin(requestUri) 
-                || proxyService.isSignup(requestUri) 
-                || proxyService.isLogout(requestUri) 
-                || proxyService.isRefreshToken(requestUri) 
-                || proxyService.isAuthApiEndpoint(requestUri) 
-                || proxyService.isAdminEndpoint(requestUri);
+        // Add Authorization header
+        if (authHeader != null && !authHeader.isEmpty()) {
+            headers.set("Authorization", authHeader);
+        }
 
-        if (isAuthRelated) {
-            logger.info("[ProxyController:forwardWriteRequest] Routing Write request to Auth Service for URI: {}", requestUri);
-            if (proxyService.isOtpVerification(requestUri)) {
-                ResponseEntity<?> authResponse = proxyService.forwardRequestWithoutToken(backendUrl + requestUri, httpMethod, headers, requestBody);
-                if (authResponse.getBody() != null && authResponse.getStatusCode().is2xxSuccessful()) {
-                    return processAuthResponse(authResponse.getBody(), response);
-                }
-                return authResponse;
-            }
-            if (proxyService.isAuthEndpoint(requestUri)) {
-                return proxyService.forwardRequestWithoutToken(backendUrl + requestUri, httpMethod, headers, requestBody);
-            }
-            if (proxyService.isSignup(requestUri)) {
-                ResponseEntity<?> authResponse = proxyService.forwardRequestWithoutToken(backendUrl + requestUri, httpMethod, headers, requestBody);
-                if (authResponse.getStatusCode().is2xxSuccessful() && authResponse != null) {
-                    return processAuthResponse(authResponse.getBody(), response);
-                }
-                return authResponse;
-            }
-            if (proxyService.isLogin(requestUri)) {
-                ResponseEntity<?> authResponse = proxyService.forwardRequestWithoutToken(backendUrl + requestUri, httpMethod, headers, requestBody);
-                if (authResponse.getStatusCode().is2xxSuccessful() && authResponse != null) {
-                    return processAuthResponse(authResponse.getBody(), response);
-                }
-                return authResponse;
-            }
-            if (proxyService.isAuthApiEndpoint(requestUri)) {
-                return proxyService.forwardRequestWithToken(backendUrl + requestUri, headers, requestBody, httpMethod);
-            }
-            if (proxyService.isRefreshToken(requestUri)) {
-                boolean requestProcessed = fingerprintUtils.processRefreshTokenRequest(request, headers, correlationId);
-                if (!requestProcessed) {
-                    return ResponseEntity.status(HttpStatus.BAD_REQUEST)
-                            .body(new ApiResponse<>(false, HttpStatus.BAD_REQUEST.value(), "Refresh token is missing or invalid", null));
-                }
-                return proxyService.forwardRequestWithToken(backendUrl + requestUri, headers, httpMethod);
-            }
-            if (proxyService.isLogout(requestUri)) {
-                boolean requestProcessed = fingerprintUtils.processLogoutRequest(request, headers, correlationId);
-                if (!requestProcessed) {
-                    return ResponseEntity.status(HttpStatus.BAD_REQUEST)
-                            .body(new ApiResponse<>(false, HttpStatus.BAD_REQUEST.value(), "Refresh token is missing or invalid", null));
-                }
-                ResponseEntity<?> logoutResponse = proxyService.forwardRequestWithTokenForLogout(backendUrl + requestUri, headers, httpMethod, correlationId);
-                return fingerprintUtils.processLogoutResponse(logoutResponse, response, correlationId);
-            }
-            if (proxyService.isAdminEndpoint(requestUri)) {
-                String adminKey = request.getHeader("X-Admin-Key");
-                if (adminKey != null && !adminKey.isEmpty()) {
-                    headers.set("X-Admin-Key", adminKey);
-                }
-                return proxyService.forwardRequestWithoutToken(backendUrl + requestUri, httpMethod, headers, requestBody);
-            }
-            return ResponseEntity.ok(new ApiResponse<>(false, HttpStatus.UNAUTHORIZED.value(), "Invalid auth Write endpoint", null));
-        } else {
-            logger.info("[ProxyController:forwardWriteRequest] Routing Write request to Main Backend for URI: {}", requestUri);
+        // Skip token validation for auth endpoints (login/signup)
+        if (proxyService.isMainServiceEndpoint(requestUri)) {
             return proxyService.forwardRequestWithToken(backendUrl + requestUri, headers, requestBody, httpMethod);
         }
+        return proxyService.forwardRequestWithToken(backendUrl + requestUri, headers, requestBody, httpMethod);
     }
 
     private HttpHeaders addCorrelationIdHeader(HttpHeaders headers) {

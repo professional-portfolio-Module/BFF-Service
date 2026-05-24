@@ -77,11 +77,12 @@ public class SecurityConfig {
                         .requestMatchers("/vx/flutter").permitAll()
                         .requestMatchers("/vx/gateway", "/vx/gateway/**", "/vx/gateway/deviceDiscovery").permitAll()
                         .requestMatchers("/vx/device-assignment").permitAll()  // Device assignment WebSocket endpoint
+                        // Internal service-to-service communication endpoints (no JWT required)
                         .requestMatchers("/BFF/api/device-assignment/**").permitAll()  // Device assignment API for Main Service -> WebSocket Service
+                        .requestMatchers("/BFF/api/proxy/AuthForward/auth/api/**").authenticated()
+                        .requestMatchers("/BFF/api/proxy/AuthForward/**").permitAll()
                         .requestMatchers("/BFF/api/proxy/auth/session/**").authenticated()
-                        .requestMatchers("/BFF/api/proxy/auth/**").permitAll()
-                        .requestMatchers("/BFF/api/proxy/admin/**").permitAll()
-                        .requestMatchers("/BFF/api/proxy/**").authenticated()
+                        .requestMatchers("/BFF/api/proxy/Main/**").authenticated()
                         .requestMatchers("/latest/**").denyAll()
                         .anyRequest().denyAll()
                 )

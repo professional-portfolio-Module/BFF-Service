@@ -8,8 +8,6 @@ config:
       url: http://localhost:8081
     - path: /websocket-service
       url: http://localhost:8082
-    - path: /
-      url: http://localhost:3001/api
   cors:
     allowed-origins:
       - "https://vxsafehome.com"
@@ -17,9 +15,7 @@ config:
       - "http://demo.vxsafehome.com"
       - "http://192.168.10.126:8089"
       - "http://192.168.1.147:8089"
-      - "http://localhost:5173"
 
 websocket:
   backend:
     url: ws://localhost:8082/vx/flutter
-
