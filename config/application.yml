@@ -10,9 +10,9 @@ config:
       url: http://localhost:8082
   cors:
     allowed-origins:
-      - "https://vxsafehome.com"
-      - "https://demo.vxsafehome.com"
-      - "http://demo.vxsafehome.com"
+      - "https://browns-company.com"
+      - "https://demo.browns-company.com"
+      - "http://demo.browns-company.com"
       - "http://192.168.10.126:8089"
       - "http://192.168.1.147:8089"
 
