@@ -147,10 +147,13 @@ public class ProxyController {
             return ResponseEntity.ok(new ApiResponse<>(false, HttpStatus.NOT_FOUND.value(), "Service not found", null));
         }
 
-        if (proxyService.isMainServiceEndpoint(requestUri)) {
-            return proxyService.forwardRequestWithToken(backendUrl + fullRequestUri, headers, HttpMethod.GET);
+        boolean validateToken = true;
+        if (requestUri.contains("/router-backend/api/hotels") || requestUri.contains("/router-backend/api/categories")) {
+            validateToken = false;
+            logger.info("[ProxyController:forwardGetRequest] Public endpoint: {}. Skipping token validation.", requestUri);
         }
-        return proxyService.forwardRequestWithToken(backendUrl + fullRequestUri, headers, HttpMethod.GET);
+
+        return proxyService.forwardRequest(backendUrl + fullRequestUri, HttpMethod.GET, headers, null, null, validateToken);
     }
 
 
