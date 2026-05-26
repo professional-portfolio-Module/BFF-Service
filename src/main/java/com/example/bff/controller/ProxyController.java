@@ -249,8 +249,14 @@ public class ProxyController {
             boolean requestProcessed = fingerprintUtils.processLogoutRequest(request, headers, correlationId);
 
             if (!requestProcessed) {
-                return ResponseEntity.status(HttpStatus.BAD_REQUEST)
-                        .body(new ApiResponse<>(false, HttpStatus.BAD_REQUEST.value(), "Refresh token is missing or invalid", null));
+                logger.info("[ProxyController:forwardPostRequest] Refresh token not found in cookies, checking if this is a token-based (mobile) request...");
+                String authHeaderVal = request.getHeader(HttpHeaders.AUTHORIZATION);
+                if (authHeaderVal != null && authHeaderVal.startsWith("Bearer ")) {
+                    logger.info("[ProxyController:forwardPostRequest] Bearer token present. Forwarding logout without refresh token to auth service.");
+                } else {
+                    return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                            .body(new ApiResponse<>(false, HttpStatus.BAD_REQUEST.value(), "Refresh token is missing or invalid", null));
+                }
             }
 
             // Forward the request to the auth service

@@ -53,6 +53,23 @@ public class TokenDecryptionFilter extends OncePerRequestFilter {
     public TokenDecryptionFilter() {
     }
 
+    private boolean isPathExcluded(String requestURI) {
+        if (environment == null) {
+            return false;
+        }
+        String excludedPathsStr = environment.getProperty("app.fingerprint.verification.excluded-paths", "");
+        if (excludedPathsStr.isEmpty()) {
+            return false;
+        }
+        String[] paths = excludedPathsStr.split(",");
+        for (String path : paths) {
+            if (pathMatcher.match(path.trim(), requestURI)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain chain)
             throws ServletException, IOException {
@@ -63,11 +80,12 @@ public class TokenDecryptionFilter extends OncePerRequestFilter {
 
         logger.info("[TokenDecryptionFilter:doFilterInternal] fingerprintVerificationEnabled={}", fingerprintVerificationEnabled);
         
-        // Skip token processing for public auth endpoints
+        // Skip token processing for public auth endpoints or excluded paths
         String requestURI = request.getRequestURI();
         if (requestURI.contains("/auth/sign-in") || requestURI.contains("/auth/sign-up") || 
-            requestURI.contains("/auth/refresh-token") || requestURI.contains("/BFF/api/health")) {
-            logger.info("[TokenDecryptionFilter:doFilterInternal] Public endpoint, skipping token processing");
+            requestURI.contains("/auth/refresh-token") || requestURI.contains("/BFF/api/health") ||
+            isPathExcluded(requestURI)) {
+            logger.info("[TokenDecryptionFilter:doFilterInternal] Public or excluded endpoint: {}, skipping token processing", requestURI);
             chain.doFilter(request, response);
             return;
         }

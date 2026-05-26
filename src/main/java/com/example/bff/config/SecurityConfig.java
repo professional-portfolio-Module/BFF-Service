@@ -85,7 +85,7 @@ public class SecurityConfig {
                         .requestMatchers(org.springframework.http.HttpMethod.GET,
                                 "/BFF/api/proxy/Main/router-backend/api/hotels",
                                 "/BFF/api/proxy/Main/router-backend/api/categories").permitAll()
-                        .requestMatchers("/BFF/api/proxy/auth/session/**").authenticated()
+                        .requestMatchers("/BFF/api/proxy/auth/session", "/BFF/api/proxy/auth/session/**").authenticated()
                         .requestMatchers("/BFF/api/proxy/Main/**").authenticated()
                         .requestMatchers("/latest/**").denyAll()
                         .anyRequest().denyAll()
