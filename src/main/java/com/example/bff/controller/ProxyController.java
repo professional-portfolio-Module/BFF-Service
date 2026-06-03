@@ -311,6 +311,9 @@ public class ProxyController {
             logger.info("[ProxyController:forwardPostRequest] Token validation for auth endpoint for Correlation ID: " + requestUri, correlationId);
 
             return proxyService.forwardRequestWithToken(backendUrl + requestUri, headers, HttpMethod.GET );
+        } else if (requestUri.contains("/auth/hotels")) {
+            logger.info("[ProxyController:forwardPostRequest] Public GET endpoint: {}. Skipping token validation.", requestUri);
+            return proxyService.forwardRequestWithoutToken(backendUrl + requestUri, HttpMethod.GET, headers, null);
         }
         return ResponseEntity.ok(new ApiResponse<>(false, HttpStatus.UNAUTHORIZED.value(), "Invalid endpoint", null));
     }
