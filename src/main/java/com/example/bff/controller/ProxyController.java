@@ -148,7 +148,9 @@ public class ProxyController {
         }
 
         boolean validateToken = true;
-        if (requestUri.contains("/router-backend/api/hotels") || requestUri.contains("/router-backend/api/categories")) {
+        if (requestUri.contains("/router-backend/api/hotels") || 
+            requestUri.contains("/router-backend/api/categories") ||
+            requestUri.contains("/router-backend/api/qr/public-metadata")) {
             validateToken = false;
             logger.info("[ProxyController:forwardGetRequest] Public endpoint: {}. Skipping token validation.", requestUri);
         }
@@ -320,7 +322,7 @@ public class ProxyController {
 
     @RequestMapping(value = "/Main/**", method = {RequestMethod.POST, RequestMethod.PUT, RequestMethod.DELETE, RequestMethod.PATCH})
     public ResponseEntity<?> MainForwardPostRequest(
-            @RequestHeader(value = "Authorization", required = true) String token,
+            @RequestHeader(value = "Authorization", required = false) String token,
             @RequestBody(required = false) Map<String, Object> requestBody,
             HttpServletRequest request) {
         HttpMethod httpMethod = HttpMethod.valueOf(request.getMethod());
@@ -351,11 +353,13 @@ public class ProxyController {
             headers.set("Authorization", authHeader);
         }
 
-        // Skip token validation for auth endpoints (login/signup)
-        if (proxyService.isMainServiceEndpoint(requestUri)) {
-            return proxyService.forwardRequestWithToken(backendUrl + requestUri, headers, requestBody, httpMethod);
+        boolean validateToken = true;
+        if (requestUri.contains("/router-backend/api/qr/public-report")) {
+            validateToken = false;
+            logger.info("[ProxyController:MainForwardPostRequest] Public POST endpoint: {}. Skipping token validation.", requestUri);
         }
-        return proxyService.forwardRequestWithToken(backendUrl + requestUri, headers, requestBody, httpMethod);
+
+        return proxyService.forwardRequest(backendUrl + requestUri, httpMethod, headers, null, requestBody, validateToken);
     }
 
     private HttpHeaders addCorrelationIdHeader(HttpHeaders headers) {

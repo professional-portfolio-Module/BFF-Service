@@ -84,7 +84,10 @@ public class SecurityConfig {
                         // Public read-only endpoints for registration & metadata
                         .requestMatchers(org.springframework.http.HttpMethod.GET,
                                 "/BFF/api/proxy/Main/router-backend/api/hotels",
-                                "/BFF/api/proxy/Main/router-backend/api/categories").permitAll()
+                                "/BFF/api/proxy/Main/router-backend/api/categories",
+                                "/BFF/api/proxy/Main/router-backend/api/qr/public-metadata/**").permitAll()
+                        .requestMatchers(org.springframework.http.HttpMethod.POST,
+                                "/BFF/api/proxy/Main/router-backend/api/qr/public-report").permitAll()
                         .requestMatchers("/BFF/api/proxy/auth/session", "/BFF/api/proxy/auth/session/**").authenticated()
                         .requestMatchers("/BFF/api/proxy/Main/**").authenticated()
                         .requestMatchers("/latest/**").denyAll()
